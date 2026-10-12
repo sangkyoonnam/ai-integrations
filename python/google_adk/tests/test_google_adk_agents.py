@@ -14,6 +14,7 @@
 
 """Integration tests for ADK Temporal support."""
 
+import importlib.metadata as importlib_metadata
 import inspect
 import json
 import logging
@@ -594,17 +595,33 @@ async def test_single_agent_telemetry(
         GoogleADKInstrumentor().uninstrument()
 
     print("\n".join(dump_spans(exporter.get_finished_spans(), with_attributes=False)))
+    adk_version = importlib_metadata.version("google-adk")
+    if tuple(int(part) for part in adk_version.split(".")[:2]) >= (2, 10):
+        # google-adk 2.10 restores the caller's trace context around model-call yields,
+        # so tool calls are traced as siblings of call_llm instead of its children.
+        agent_spans = [
+            "        execute_tool get_weather",
+            "          StartActivity:get_weather",
+            "            RunActivity:get_weather",
+            "        call_llm",
+            "          StartActivity:invoke_model",
+            "            RunActivity:invoke_model",
+        ]
+    else:
+        agent_spans = [
+            "        call_llm",
+            "          StartActivity:invoke_model",
+            "            RunActivity:invoke_model",
+            "          execute_tool get_weather",
+            "            StartActivity:get_weather",
+            "              RunActivity:get_weather",
+        ]
     assert dump_spans(exporter.get_finished_spans(), with_attributes=False) == [
         "StartWorkflow:WeatherAgent",
         "  RunWorkflow:WeatherAgent",
         "    invocation [test_app]",
         "      agent_run [test_agent]",
-        "        call_llm",
-        "          StartActivity:invoke_model",
-        "            RunActivity:invoke_model",
-        "          execute_tool get_weather",
-        "            StartActivity:get_weather",
-        "              RunActivity:get_weather",
+        *agent_spans,
         "        call_llm",
         "          StartActivity:invoke_model",
         "            RunActivity:invoke_model",
